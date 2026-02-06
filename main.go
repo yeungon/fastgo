@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
@@ -19,15 +18,15 @@ import (
 
 // Configuration holds server settings
 type Configuration struct {
-	Port              string
-	ReadTimeout       time.Duration
-	WriteTimeout      time.Duration
-	IdleTimeout       time.Duration
-	MaxWorkers        int
-	WorkerQueueSize   int
-	ShutdownTimeout   time.Duration
-	EnableMetrics     bool
-	MaxConnections    int
+	Port            string
+	ReadTimeout     time.Duration
+	WriteTimeout    time.Duration
+	IdleTimeout     time.Duration
+	MaxWorkers      int
+	WorkerQueueSize int
+	ShutdownTimeout time.Duration
+	EnableMetrics   bool
+	MaxConnections  int
 }
 
 // Metrics tracks server statistics
@@ -42,11 +41,11 @@ type Metrics struct {
 
 // WorkerPool manages concurrent request processing
 type WorkerPool struct {
-	workers    int
-	jobQueue   chan Job
-	wg         sync.WaitGroup
-	ctx        context.Context
-	cancel     context.CancelFunc
+	workers  int
+	jobQueue chan Job
+	wg       sync.WaitGroup
+	ctx      context.Context
+	cancel   context.CancelFunc
 }
 
 // Job represents a unit of work
@@ -72,15 +71,15 @@ type Server struct {
 // NewConfiguration creates default configuration
 func NewConfiguration() *Configuration {
 	return &Configuration{
-		Port:              ":8080",
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
-		MaxWorkers:        runtime.NumCPU() * 2, // 2x CPU cores
-		WorkerQueueSize:   10000,
-		ShutdownTimeout:   30 * time.Second,
-		EnableMetrics:     true,
-		MaxConnections:    100000,
+		Port:            ":8080",
+		ReadTimeout:     15 * time.Second,
+		WriteTimeout:    15 * time.Second,
+		IdleTimeout:     60 * time.Second,
+		MaxWorkers:      runtime.NumCPU() * 2, // 2x CPU cores
+		WorkerQueueSize: 10000,
+		ShutdownTimeout: 30 * time.Second,
+		EnableMetrics:   true,
+		MaxConnections:  100000,
 	}
 }
 
@@ -112,7 +111,7 @@ func (m *Metrics) IncrementErrors() {
 func (m *Metrics) GetStats() map[string]interface{} {
 	uptime := time.Since(m.startTime).Seconds()
 	completed := atomic.LoadInt64(&m.completedRequests)
-	
+
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
 
@@ -133,7 +132,7 @@ func (m *Metrics) GetStats() map[string]interface{} {
 // NewWorkerPool creates a new worker pool
 func NewWorkerPool(ctx context.Context, workers, queueSize int) *WorkerPool {
 	poolCtx, cancel := context.WithCancel(ctx)
-	
+
 	pool := &WorkerPool{
 		workers:  workers,
 		jobQueue: make(chan Job, queueSize),
@@ -157,9 +156,9 @@ func (wp *WorkerPool) start() {
 // worker processes jobs from the queue
 func (wp *WorkerPool) worker(id int) {
 	defer wp.wg.Done()
-	
+
 	log.Printf("Worker %d started", id)
-	
+
 	for {
 		select {
 		case <-wp.ctx.Done():
@@ -170,10 +169,10 @@ func (wp *WorkerPool) worker(id int) {
 				log.Printf("Worker %d: job queue closed", id)
 				return
 			}
-			
+
 			// Process the job
 			result := wp.processJob(job)
-			
+
 			// Send result back if channel is provided
 			if job.ResultCh != nil {
 				select {
@@ -194,9 +193,9 @@ func (wp *WorkerPool) processJob(job Job) JobResult {
 	// - API calls
 	// - Data processing
 	// - etc.
-	
+
 	time.Sleep(100 * time.Millisecond) // Simulate work
-	
+
 	return JobResult{
 		Data: map[string]interface{}{
 			"request_id": job.RequestID,
@@ -302,7 +301,7 @@ func (s *Server) handleHealth(ctx *fasthttp.RequestCtx) {
 // router handles request routing
 func (s *Server) router(ctx *fasthttp.RequestCtx) {
 	path := string(ctx.Path())
-	
+
 	switch path {
 	case "/":
 		s.handleRequest(ctx)
@@ -353,7 +352,7 @@ func (s *Server) Start(ctx context.Context) error {
 		return err
 	case <-ctx.Done():
 		log.Println("Shutdown signal received")
-		
+
 		// Graceful shutdown
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), s.config.ShutdownTimeout)
 		defer cancel()
@@ -393,7 +392,7 @@ func (s *Server) logMetrics(ctx context.Context) {
 func main() {
 	// Create configuration
 	config := NewConfiguration()
-	
+
 	// Override from environment variables if needed
 	if port := os.Getenv("PORT"); port != "" {
 		config.Port = ":" + port
