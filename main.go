@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -15,6 +17,9 @@ import (
 
 	"github.com/valyala/fasthttp"
 )
+
+//go:embed static/*
+var staticFiles embed.FS
 
 // Configuration holds server settings
 type Configuration struct {
@@ -298,6 +303,49 @@ func (s *Server) handleHealth(ctx *fasthttp.RequestCtx) {
 	})
 }
 
+// handleDashboard serves the monitoring dashboard
+func (s *Server) handleDashboard(ctx *fasthttp.RequestCtx) {
+	content, err := staticFiles.ReadFile("static/dashboard.html")
+	if err != nil {
+		ctx.Error("Dashboard not found", fasthttp.StatusNotFound)
+		return
+	}
+	ctx.Response.Header.Set("Content-Type", "text/html; charset=utf-8")
+	ctx.Write(content)
+}
+
+// handleSSEMetrics streams metrics via Server-Sent Events
+func (s *Server) handleSSEMetrics(ctx *fasthttp.RequestCtx) {
+	ctx.Response.Header.Set("Content-Type", "text/event-stream")
+	ctx.Response.Header.Set("Cache-Control", "no-cache")
+	ctx.Response.Header.Set("Connection", "keep-alive")
+	ctx.Response.Header.Set("Access-Control-Allow-Origin", "*")
+
+	// Set streaming mode
+	ctx.SetBodyStreamWriter(func(w *bufio.Writer) {
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				stats := s.metrics.GetStats()
+				data, err := json.Marshal(stats)
+				if err != nil {
+					continue
+				}
+
+				// Write SSE format
+				fmt.Fprintf(w, "data: %s\n\n", data)
+				if err := w.Flush(); err != nil {
+					// Client disconnected
+					return
+				}
+			}
+		}
+	})
+}
+
 // router handles request routing
 func (s *Server) router(ctx *fasthttp.RequestCtx) {
 	path := string(ctx.Path())
@@ -305,6 +353,10 @@ func (s *Server) router(ctx *fasthttp.RequestCtx) {
 	switch path {
 	case "/":
 		s.handleRequest(ctx)
+	case "/dashboard":
+		s.handleDashboard(ctx)
+	case "/sse/metrics":
+		s.handleSSEMetrics(ctx)
 	case "/metrics":
 		s.handleMetrics(ctx)
 	case "/health":

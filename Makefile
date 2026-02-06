@@ -1,4 +1,4 @@
-.PHONY: help build run test clean docker docker-run benchmark install-deps setup-limits
+.PHONY: help build run test clean docker docker-run benchmark install-deps setup-limits deploy update
 
 # Variables
 BINARY_NAME=server
@@ -6,6 +6,12 @@ CLIENT_BINARY=client
 DOCKER_IMAGE=highconcurrency-server
 PORT?=8080
 WORKERS?=8
+
+# VPS Deployment Configuration (customize these)
+VPS_USER?=root
+VPS_HOST?=your-vps-ip
+VPS_APP_DIR?=/opt/highconcurrency-server
+SERVICE_NAME?=highconcurrency-server
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -138,3 +144,73 @@ all: fmt vet build test ## Run fmt, vet, build and test
 
 watch: ## Watch for changes and rebuild (requires entr)
 	find . -name '*.go' | entr -r make run
+
+# ============================================
+# VPS Deployment Commands
+# ============================================
+
+build-linux: ## Build binary for Linux (cross-compile)
+	@echo "Building for Linux amd64..."
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o $(BINARY_NAME)-linux main.go
+	@echo "Build complete: $(BINARY_NAME)-linux"
+
+deploy: build-linux ## Deploy to VPS (first time setup)
+	@echo "Deploying to $(VPS_USER)@$(VPS_HOST)..."
+	@echo "1. Uploading binary..."
+	scp $(BINARY_NAME)-linux $(VPS_USER)@$(VPS_HOST):/tmp/$(BINARY_NAME)
+	@echo "2. Setting up on VPS..."
+	ssh $(VPS_USER)@$(VPS_HOST) '\
+		sudo mkdir -p $(VPS_APP_DIR) && \
+		sudo mv /tmp/$(BINARY_NAME) $(VPS_APP_DIR)/$(BINARY_NAME) && \
+		sudo chmod +x $(VPS_APP_DIR)/$(BINARY_NAME) && \
+		sudo chown -R appuser:appuser $(VPS_APP_DIR) 2>/dev/null || true && \
+		(sudo systemctl restart $(SERVICE_NAME) 2>/dev/null || echo "Service not configured yet") && \
+		echo "Deployment complete!"'
+	@echo "✅ Deploy finished! Access: http://$(VPS_HOST):8080/dashboard"
+
+update: build-linux ## Update existing VPS deployment (quick update)
+	@echo "🚀 Updating $(VPS_USER)@$(VPS_HOST)..."
+	@echo "📦 Uploading new binary..."
+	scp $(BINARY_NAME)-linux $(VPS_USER)@$(VPS_HOST):/tmp/$(BINARY_NAME)
+	@echo "🔄 Restarting service..."
+	ssh $(VPS_USER)@$(VPS_HOST) '\
+		sudo mv /tmp/$(BINARY_NAME) $(VPS_APP_DIR)/$(BINARY_NAME) && \
+		sudo chmod +x $(VPS_APP_DIR)/$(BINARY_NAME) && \
+		sudo systemctl restart $(SERVICE_NAME) && \
+		sleep 2 && \
+		sudo systemctl status $(SERVICE_NAME) --no-pager | head -10'
+	@echo ""
+	@echo "✅ Update complete! Dashboard: http://$(VPS_HOST):8080/dashboard"
+
+update-from-git: ## Update VPS by pulling from git (run on VPS)
+	@echo "Updating from git repository..."
+	ssh $(VPS_USER)@$(VPS_HOST) '\
+		cd ~/highconcurrency-server && \
+		git pull origin main && \
+		go build -ldflags="-w -s" -o server main.go && \
+		sudo cp server $(VPS_APP_DIR)/ && \
+		sudo systemctl restart $(SERVICE_NAME) && \
+		echo "Update complete!"'
+
+vps-status: ## Check VPS service status
+	@ssh $(VPS_USER)@$(VPS_HOST) '\
+		echo "=== Service Status ===" && \
+		sudo systemctl status $(SERVICE_NAME) --no-pager | head -15 && \
+		echo "" && \
+		echo "=== Health Check ===" && \
+		curl -s http://localhost:8080/health && \
+		echo "" && \
+		echo "" && \
+		echo "=== Metrics ===" && \
+		curl -s http://localhost:8080/metrics | head -c 500'
+
+vps-logs: ## View VPS service logs
+	@ssh $(VPS_USER)@$(VPS_HOST) 'sudo journalctl -u $(SERVICE_NAME) -f'
+
+vps-restart: ## Restart VPS service
+	@ssh $(VPS_USER)@$(VPS_HOST) 'sudo systemctl restart $(SERVICE_NAME)'
+	@echo "Service restarted"
+
+vps-stop: ## Stop VPS service
+	@ssh $(VPS_USER)@$(VPS_HOST) 'sudo systemctl stop $(SERVICE_NAME)'
+	@echo "Service stopped"
