@@ -253,9 +253,40 @@ k6 run loadtest/k6-stress.js
 k6 run loadtest/k6-compare-servers.js
 ```
 
-### Testing Remote VPS
+### Testing Remote VPS from Local Mac
+
+Test your VPS servers from your local machine while watching the dashboard in real-time.
 
 ```bash
+# =====================================================
+# METHOD 1: Using Makefile (Recommended)
+# =====================================================
+
+# Run k6 tests against all 3 VPS servers simultaneously (30s, 100 VUs)
+make k6-vps VPS_HOST=139.162.9.158
+
+# Stress test (60s, 500 VUs)
+make k6-vps-stress VPS_HOST=139.162.9.158
+
+# Custom VUs and duration
+VUS=200 DURATION=60s make k6-vps-custom VPS_HOST=139.162.9.158
+
+# =====================================================
+# METHOD 2: Manual Commands
+# =====================================================
+
+# Step 1: Open the comparison dashboard in your browser
+open http://139.162.9.158:8080/compare3
+
+# Step 2: Run k6 tests against all 3 servers in parallel
+k6 run --duration 30s --vus 100 loadtest/k6-quick.js --env TARGET_URL=http://139.162.9.158:8080 &
+k6 run --duration 30s --vus 100 loadtest/k6-quick.js --env TARGET_URL=http://139.162.9.158:8081 &
+k6 run --duration 30s --vus 100 loadtest/k6-quick.js --env TARGET_URL=http://139.162.9.158:8082 &
+
+# =====================================================
+# Individual Server Tests
+# =====================================================
+
 # Quick test each server on VPS
 k6 run loadtest/k6-quick.js --env TARGET_URL=http://YOUR_VPS_IP:8080  # Worker Pool
 k6 run loadtest/k6-quick.js --env TARGET_URL=http://YOUR_VPS_IP:8081  # Chi Web
@@ -264,7 +295,7 @@ k6 run loadtest/k6-quick.js --env TARGET_URL=http://YOUR_VPS_IP:8082  # Fiber
 # 2000 user simulation on VPS
 k6 run loadtest/k6-student-registration.js --env TARGET_URL=http://YOUR_VPS_IP:8081
 
-# Stress test VPS
+# Stress test VPS (find breaking point)
 k6 run loadtest/k6-stress.js --env TARGET_URL=http://YOUR_VPS_IP:8081
 
 # Compare both VPS servers
@@ -275,6 +306,29 @@ k6 run loadtest/k6-quick.js --env TARGET_URL=http://YOUR_VPS_IP:8081 --env VUS=1
 
 # Custom VUs with duration override
 k6 run -u 1000 -d 60s loadtest/k6-quick.js --env TARGET_URL=http://YOUR_VPS_IP:8081
+```
+
+### VPS Deployment Commands
+
+```bash
+# Build and deploy all 3 servers to VPS (cross-compile on Mac)
+make update-all VPS_HOST=139.162.9.158
+
+# Or build directly on VPS (requires Go installed)
+make vps-build-all VPS_HOST=139.162.9.158
+
+# Start/stop all servers on VPS
+make vps-start-all VPS_HOST=139.162.9.158
+make vps-stop-all VPS_HOST=139.162.9.158
+
+# Check server health on VPS
+make vps-status-all VPS_HOST=139.162.9.158
+
+# View logs of all servers
+make vps-logs-all VPS_HOST=139.162.9.158
+
+# Open firewall ports (8080, 8081, 8082)
+make vps-firewall VPS_HOST=139.162.9.158
 ```
 
 ### Available k6 Scripts

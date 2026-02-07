@@ -1,4 +1,4 @@
-.PHONY: help build build-web build-fiber build-all run run-both run-all run-compare test clean docker docker-run benchmark install-deps setup-limits deploy update
+.PHONY: help build build-web build-fiber build-all run run-both run-all run-compare test clean docker docker-run benchmark install-deps setup-limits deploy update k6-vps
 
 # Variables
 BINARY_NAME=server
@@ -224,12 +224,19 @@ watch: ## Watch for changes and rebuild (requires entr)
 # VPS Deployment Commands
 # ============================================
 
-build-linux: ## Build binary for Linux (cross-compile)
-	@echo "Building for Linux amd64..."
+build-linux: ## Build main server for Linux (cross-compile)
+	@echo "Building main server for Linux amd64..."
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o $(BINARY_NAME)-linux main.go
 	@echo "Build complete: $(BINARY_NAME)-linux"
 
-deploy: build-linux ## Deploy to VPS (first time setup)
+build-linux-all: ## Build all 3 servers for Linux (cross-compile)
+	@echo "Building all servers for Linux amd64..."
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o $(BINARY_NAME)-linux main.go
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o $(WEB_BINARY)-linux ./cmd/web/main.go
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o $(FIBER_BINARY)-linux ./cmd/fiber/main.go
+	@echo "Build complete: $(BINARY_NAME)-linux, $(WEB_BINARY)-linux, $(FIBER_BINARY)-linux"
+
+deploy: build-linux ## Deploy main server to VPS (first time setup)
 	@echo "Deploying to $(VPS_USER)@$(VPS_HOST)..."
 	@echo "1. Uploading binary..."
 	scp $(BINARY_NAME)-linux $(VPS_USER)@$(VPS_HOST):/tmp/$(BINARY_NAME)
@@ -243,7 +250,19 @@ deploy: build-linux ## Deploy to VPS (first time setup)
 		echo "Deployment complete!"'
 	@echo "✅ Deploy finished! Access: http://$(VPS_HOST):8080/dashboard"
 
-update: build-linux ## Update existing VPS deployment (quick update)
+deploy-all: build-linux-all ## Deploy all 3 servers to VPS
+	@echo "🚀 Deploying all servers to $(VPS_USER)@$(VPS_HOST)..."
+	@echo "📦 Uploading binaries..."
+	scp $(BINARY_NAME)-linux $(WEB_BINARY)-linux $(FIBER_BINARY)-linux $(VPS_USER)@$(VPS_HOST):$(VPS_APP_DIR)/
+	@echo "📁 Uploading static files..."
+	ssh $(VPS_USER)@$(VPS_HOST) 'mkdir -p $(VPS_APP_DIR)/static'
+	scp static/*.html $(VPS_USER)@$(VPS_HOST):$(VPS_APP_DIR)/static/
+	@echo "✅ Deploy complete!"
+	@echo ""
+	@echo "To start all servers on VPS, run:"
+	@echo "  make vps-start-all VPS_HOST=$(VPS_HOST)"
+
+update: build-linux ## Update main server on VPS (quick update)
 	@echo "🚀 Updating $(VPS_USER)@$(VPS_HOST)..."
 	@echo "📦 Uploading new binary..."
 	scp $(BINARY_NAME)-linux $(VPS_USER)@$(VPS_HOST):/tmp/$(BINARY_NAME)
@@ -257,6 +276,85 @@ update: build-linux ## Update existing VPS deployment (quick update)
 	@echo ""
 	@echo "✅ Update complete! Dashboard: http://$(VPS_HOST):8080/dashboard"
 
+update-all: build-linux-all ## Update all 3 servers on VPS
+	@echo "🚀 Updating all servers on $(VPS_USER)@$(VPS_HOST)..."
+	@echo "📦 Uploading binaries..."
+	scp $(BINARY_NAME)-linux $(WEB_BINARY)-linux $(FIBER_BINARY)-linux $(VPS_USER)@$(VPS_HOST):$(VPS_APP_DIR)/
+	scp static/*.html $(VPS_USER)@$(VPS_HOST):$(VPS_APP_DIR)/static/
+	@echo "🔄 Restarting servers..."
+	ssh $(VPS_USER)@$(VPS_HOST) '\
+		pkill -f "$(BINARY_NAME)-linux" || true && \
+		pkill -f "$(WEB_BINARY)-linux" || true && \
+		pkill -f "$(FIBER_BINARY)-linux" || true && \
+		sleep 1 && \
+		cd $(VPS_APP_DIR) && \
+		nohup ./$(BINARY_NAME)-linux > server.log 2>&1 & \
+		sleep 1 && \
+		PORT=8081 nohup ./$(WEB_BINARY)-linux > web-server.log 2>&1 & \
+		sleep 1 && \
+		nohup ./$(FIBER_BINARY)-linux > fiber-server.log 2>&1 & \
+		sleep 2 && \
+		echo "Servers started!" && \
+		curl -s localhost:8080/health && echo " - Worker Pool OK" && \
+		curl -s localhost:8081/health && echo " - Chi Web OK" && \
+		curl -s localhost:8082/health && echo " - Fiber OK"'
+	@echo ""
+	@echo "✅ Update complete!"
+	@echo "  Dashboard: http://$(VPS_HOST):8080/compare3"
+
+vps-build-all: ## Build all servers directly on VPS (requires Go on VPS)
+	@echo "🔨 Building all servers on VPS..."
+	ssh $(VPS_USER)@$(VPS_HOST) '\
+		cd $(VPS_APP_DIR) && \
+		git pull 2>/dev/null || true && \
+		go build -ldflags="-w -s" -o $(BINARY_NAME) main.go && \
+		go build -ldflags="-w -s" -o $(WEB_BINARY) ./cmd/web/main.go && \
+		go build -ldflags="-w -s" -o $(FIBER_BINARY) ./cmd/fiber/main.go && \
+		echo "Build complete!"'
+
+vps-start-all: ## Start all 3 servers on VPS
+	@echo "🚀 Starting all servers on VPS..."
+	ssh $(VPS_USER)@$(VPS_HOST) '\
+		cd $(VPS_APP_DIR) && \
+		pkill -f "$(BINARY_NAME)" 2>/dev/null || true && \
+		pkill -f "$(WEB_BINARY)" 2>/dev/null || true && \
+		pkill -f "$(FIBER_BINARY)" 2>/dev/null || true && \
+		sleep 1 && \
+		nohup ./$(BINARY_NAME)-linux > server.log 2>&1 & \
+		sleep 1 && \
+		PORT=8081 nohup ./$(WEB_BINARY)-linux > web-server.log 2>&1 & \
+		sleep 1 && \
+		nohup ./$(FIBER_BINARY)-linux > fiber-server.log 2>&1 & \
+		sleep 2 && \
+		ufw allow 8081/tcp 2>/dev/null || true && \
+		ufw allow 8082/tcp 2>/dev/null || true && \
+		echo "" && \
+		echo "=== Server Health ===" && \
+		curl -s localhost:8080/health && echo " - Worker Pool (8080) OK" && \
+		curl -s localhost:8081/health && echo " - Chi Web (8081) OK" && \
+		curl -s localhost:8082/health && echo " - Fiber (8082) OK"'
+	@echo ""
+	@echo "✅ All servers started!"
+	@echo "  Compare Dashboard: http://$(VPS_HOST):8080/compare3"
+
+vps-stop-all: ## Stop all 3 servers on VPS
+	@echo "🛑 Stopping all servers on VPS..."
+	ssh $(VPS_USER)@$(VPS_HOST) '\
+		pkill -f "$(BINARY_NAME)" 2>/dev/null || true && \
+		pkill -f "$(WEB_BINARY)" 2>/dev/null || true && \
+		pkill -f "$(FIBER_BINARY)" 2>/dev/null || true && \
+		echo "All servers stopped"'
+
+vps-status-all: ## Check status of all 3 servers on VPS
+	@ssh $(VPS_USER)@$(VPS_HOST) '\
+		echo "=== Process Status ===" && \
+		ps aux | grep -E "(server|web-server|fiber-server)" | grep -v grep || echo "No servers running" && \
+		echo "" && \
+		echo "=== Health Checks ===" && \
+		(curl -s localhost:8080/health 2>/dev/null && echo " - Worker Pool (8080) OK") || echo "❌ Worker Pool (8080) DOWN" && \
+		(curl -s localhost:8081/health 2>/dev/null && echo " - Chi Web (8081) OK") || echo "❌ Chi Web (8081) DOWN" && \
+		(curl -s localhost:8082/health 2>/dev/null && echo " - Fiber (8082) OK") || echo "❌ Fiber (8082) DOWN"'
+
 update-from-git: ## Update VPS by pulling from git (run on VPS)
 	@echo "Updating from git repository..."
 	ssh $(VPS_USER)@$(VPS_HOST) '\
@@ -267,7 +365,7 @@ update-from-git: ## Update VPS by pulling from git (run on VPS)
 		sudo systemctl restart $(SERVICE_NAME) && \
 		echo "Update complete!"'
 
-vps-status: ## Check VPS service status
+vps-status: ## Check VPS service status (systemd)
 	@ssh $(VPS_USER)@$(VPS_HOST) '\
 		echo "=== Service Status ===" && \
 		sudo systemctl status $(SERVICE_NAME) --no-pager | head -15 && \
@@ -282,6 +380,18 @@ vps-status: ## Check VPS service status
 vps-logs: ## View VPS service logs
 	@ssh $(VPS_USER)@$(VPS_HOST) 'sudo journalctl -u $(SERVICE_NAME) -f'
 
+vps-logs-all: ## View logs of all 3 servers on VPS
+	@ssh $(VPS_USER)@$(VPS_HOST) '\
+		cd $(VPS_APP_DIR) && \
+		echo "=== Worker Pool Log (last 20 lines) ===" && \
+		tail -20 server.log 2>/dev/null || echo "No log file" && \
+		echo "" && \
+		echo "=== Chi Web Log (last 20 lines) ===" && \
+		tail -20 web-server.log 2>/dev/null || echo "No log file" && \
+		echo "" && \
+		echo "=== Fiber Log (last 20 lines) ===" && \
+		tail -20 fiber-server.log 2>/dev/null || echo "No log file"'
+
 vps-restart: ## Restart VPS service
 	@ssh $(VPS_USER)@$(VPS_HOST) 'sudo systemctl restart $(SERVICE_NAME)'
 	@echo "Service restarted"
@@ -289,3 +399,71 @@ vps-restart: ## Restart VPS service
 vps-stop: ## Stop VPS service
 	@ssh $(VPS_USER)@$(VPS_HOST) 'sudo systemctl stop $(SERVICE_NAME)'
 	@echo "Service stopped"
+
+vps-firewall: ## Open firewall ports 8080, 8081, 8082 on VPS
+	@echo "Opening firewall ports..."
+	ssh $(VPS_USER)@$(VPS_HOST) '\
+		ufw allow 8080/tcp && \
+		ufw allow 8081/tcp && \
+		ufw allow 8082/tcp && \
+		ufw status | grep -E "8080|8081|8082"'
+	@echo "Firewall configured"
+
+# ============================================
+# K6 Load Testing Commands (from localhost to VPS)
+# ============================================
+
+k6-vps: ## Run k6 load test against VPS (all 3 servers simultaneously)
+	@echo "🚀 Running k6 load tests against VPS..."
+	@echo "   Target: $(VPS_HOST)"
+	@echo "   Duration: 30s, VUs: 100"
+	@echo ""
+	k6 run --duration 30s --vus 100 loadtest/k6-quick.js --env TARGET_URL=http://$(VPS_HOST):8080 &
+	k6 run --duration 30s --vus 100 loadtest/k6-quick.js --env TARGET_URL=http://$(VPS_HOST):8081 &
+	k6 run --duration 30s --vus 100 loadtest/k6-quick.js --env TARGET_URL=http://$(VPS_HOST):8082 &
+	@echo ""
+	@echo "📊 View dashboard: http://$(VPS_HOST):8080/compare3"
+
+k6-vps-stress: ## Run k6 stress test against VPS (500 VUs)
+	@echo "🔥 Running k6 STRESS tests against VPS..."
+	@echo "   Target: $(VPS_HOST)"
+	@echo "   Duration: 60s, VUs: 500"
+	@echo ""
+	k6 run --duration 60s --vus 500 loadtest/k6-quick.js --env TARGET_URL=http://$(VPS_HOST):8080 &
+	k6 run --duration 60s --vus 500 loadtest/k6-quick.js --env TARGET_URL=http://$(VPS_HOST):8081 &
+	k6 run --duration 60s --vus 500 loadtest/k6-quick.js --env TARGET_URL=http://$(VPS_HOST):8082 &
+	@echo ""
+	@echo "📊 View dashboard: http://$(VPS_HOST):8080/compare3"
+
+k6-vps-1000: ## Run k6 test with 1000 concurrent connections
+	@echo "🔥 Running k6 with 1000 VUs against VPS..."
+	@echo "   Target: $(VPS_HOST)"
+	@echo "   Duration: 60s, VUs: 1000"
+	@echo ""
+	k6 run --duration 60s --vus 1000 loadtest/k6-quick.js --env TARGET_URL=http://$(VPS_HOST):8080 &
+	k6 run --duration 60s --vus 1000 loadtest/k6-quick.js --env TARGET_URL=http://$(VPS_HOST):8081 &
+	k6 run --duration 60s --vus 1000 loadtest/k6-quick.js --env TARGET_URL=http://$(VPS_HOST):8082 &
+	@echo ""
+	@echo "📊 View dashboard: http://$(VPS_HOST):8080/compare3"
+
+k6-vps-2000: ## Run k6 test with 2000 concurrent connections (student registration simulation)
+	@echo "🔥 Running k6 with 2000 VUs against VPS..."
+	@echo "   Target: $(VPS_HOST)"
+	@echo "   Duration: 120s, VUs: 2000"
+	@echo ""
+	k6 run --duration 120s --vus 2000 loadtest/k6-quick.js --env TARGET_URL=http://$(VPS_HOST):8080 &
+	k6 run --duration 120s --vus 2000 loadtest/k6-quick.js --env TARGET_URL=http://$(VPS_HOST):8081 &
+	k6 run --duration 120s --vus 2000 loadtest/k6-quick.js --env TARGET_URL=http://$(VPS_HOST):8082 &
+	@echo ""
+	@echo "📊 View dashboard: http://$(VPS_HOST):8080/compare3"
+
+k6-vps-single: ## Run k6 test against VPS (single server - Worker Pool only)
+	@echo "🚀 Running k6 load test against VPS Worker Pool..."
+	k6 run --duration 30s --vus 100 loadtest/k6-quick.js --env TARGET_URL=http://$(VPS_HOST):8080
+
+k6-vps-custom: ## Run k6 with custom VUs and duration (VUS=100 DURATION=30s make k6-vps-custom)
+	@echo "🚀 Running custom k6 load test against VPS..."
+	@echo "   VUS=$(VUS) DURATION=$(DURATION)"
+	k6 run --duration $(DURATION) --vus $(VUS) loadtest/k6-quick.js --env TARGET_URL=http://$(VPS_HOST):8080 &
+	k6 run --duration $(DURATION) --vus $(VUS) loadtest/k6-quick.js --env TARGET_URL=http://$(VPS_HOST):8081 &
+	k6 run --duration $(DURATION) --vus $(VUS) loadtest/k6-quick.js --env TARGET_URL=http://$(VPS_HOST):8082 &
