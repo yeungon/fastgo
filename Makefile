@@ -1,10 +1,12 @@
-.PHONY: help build run test clean docker docker-run benchmark install-deps setup-limits deploy update
+.PHONY: help build build-web build-all run run-both run-compare test clean docker docker-run benchmark install-deps setup-limits deploy update
 
 # Variables
 BINARY_NAME=server
+WEB_BINARY=web-server
 CLIENT_BINARY=client
 DOCKER_IMAGE=highconcurrency-server
 PORT?=8080
+WEB_PORT?=8081
 WORKERS?=8
 
 # VPS Deployment Configuration (customize these)
@@ -23,18 +25,51 @@ install-deps: ## Install Go dependencies
 	go mod download
 	go mod verify
 
-build: ## Build the server binary
-	@echo "Building server..."
+build: ## Build the worker pool server (fasthttp)
+	@echo "Building worker pool server..."
 	CGO_ENABLED=0 go build -ldflags="-w -s" -o $(BINARY_NAME) main.go
 	@echo "Build complete: $(BINARY_NAME)"
+
+build-web: ## Build the chi web server (net/http)
+	@echo "Building chi web server..."
+	CGO_ENABLED=0 go build -ldflags="-w -s" -o $(WEB_BINARY) ./cmd/web/main.go
+	@echo "Build complete: $(WEB_BINARY)"
+
+build-all: build build-web ## Build both servers
+	@echo "Both servers built!"
 
 build-client: ## Build the test client
 	@echo "Building client..."
 	cd client && CGO_ENABLED=0 go build -ldflags="-w -s" -o $(CLIENT_BINARY) client.go
 	@echo "Build complete: client/$(CLIENT_BINARY)"
 
-run: build ## Build and run the server
+run: build ## Build and run the worker pool server
 	./$(BINARY_NAME)
+
+run-web: build-web ## Build and run the chi web server
+	PORT=$(WEB_PORT) ./$(WEB_BINARY)
+
+run-both: build-all ## Run both servers for comparison
+	@echo "Starting Worker Pool server on port 8080..."
+	./$(BINARY_NAME) &
+	@sleep 1
+	@echo "Starting Chi Web server on port 8081..."
+	PORT=8081 ./$(WEB_BINARY) &
+	@echo ""
+	@echo "Both servers running!"
+	@echo "  Worker Pool: http://localhost:8080"
+	@echo "  Chi Web:     http://localhost:8081"
+	@echo "  Compare:     http://localhost:8080/compare"
+	@echo ""
+	@echo "Press Ctrl+C to stop"
+	@wait
+
+run-compare: run-both ## Alias for run-both
+
+stop-both: ## Stop both servers
+	@pkill -f "$(BINARY_NAME)" 2>/dev/null || true
+	@pkill -f "$(WEB_BINARY)" 2>/dev/null || true
+	@echo "Servers stopped"
 
 run-dev: ## Run with race detector for development
 	go run -race main.go
@@ -77,6 +112,9 @@ docker-compose-down: ## Stop docker-compose services
 
 clean: ## Clean build artifacts
 	rm -f $(BINARY_NAME)
+	rm -f $(WEB_BINARY)
+	rm -f $(BINARY_NAME)-linux
+	rm -f $(WEB_BINARY)-linux
 	rm -f client/$(CLIENT_BINARY)
 	go clean
 

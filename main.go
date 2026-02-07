@@ -314,6 +314,17 @@ func (s *Server) handleDashboard(ctx *fasthttp.RequestCtx) {
 	ctx.Write(content)
 }
 
+// handleCompare serves the comparison dashboard (both servers)
+func (s *Server) handleCompare(ctx *fasthttp.RequestCtx) {
+	content, err := staticFiles.ReadFile("static/compare.html")
+	if err != nil {
+		ctx.Error("Compare dashboard not found", fasthttp.StatusNotFound)
+		return
+	}
+	ctx.Response.Header.Set("Content-Type", "text/html; charset=utf-8")
+	ctx.Write(content)
+}
+
 // handleSSEMetrics streams metrics via Server-Sent Events
 func (s *Server) handleSSEMetrics(ctx *fasthttp.RequestCtx) {
 	ctx.Response.Header.Set("Content-Type", "text/event-stream")
@@ -355,6 +366,8 @@ func (s *Server) router(ctx *fasthttp.RequestCtx) {
 		s.handleRequest(ctx)
 	case "/dashboard":
 		s.handleDashboard(ctx)
+	case "/compare":
+		s.handleCompare(ctx)
 	case "/sse/metrics":
 		s.handleSSEMetrics(ctx)
 	case "/metrics":
