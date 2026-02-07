@@ -23,10 +23,13 @@ type Metrics struct {
 	completedRequests int64
 	errorCount        int64
 	startTime         time.Time
+	lastCPUTime       time.Time
+	lastCPUUsage      float64
 }
 
 var metrics = &Metrics{
-	startTime: time.Now(),
+	startTime:   time.Now(),
+	lastCPUTime: time.Now(),
 }
 
 func (m *Metrics) IncrementActive() {
@@ -43,25 +46,76 @@ func (m *Metrics) IncrementErrors() {
 	atomic.AddInt64(&m.errorCount, 1)
 }
 
+// getCPUUsage calculates approximate CPU usage based on goroutines and work
+func getCPUUsage() float64 {
+	numCPU := runtime.NumCPU()
+	numGoroutines := runtime.NumGoroutine()
+
+	// Approximate CPU usage based on goroutines vs available CPUs
+	// This is a rough estimate - real CPU monitoring would require OS-level tools
+	usage := float64(numGoroutines) / float64(numCPU*10) * 100
+	if usage > 100 {
+		usage = 100
+	}
+	return usage
+}
+
 func (m *Metrics) GetStats() map[string]interface{} {
 	uptime := time.Since(m.startTime).Seconds()
 	completed := atomic.LoadInt64(&m.completedRequests)
+	active := atomic.LoadInt64(&m.activeConnections)
+	total := atomic.LoadInt64(&m.totalRequests)
+	errors := atomic.LoadInt64(&m.errorCount)
 
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
 
+	// Calculate requests per second (recent)
+	rps := float64(0)
+	if uptime > 0 {
+		rps = float64(completed) / uptime
+	}
+
+	// Calculate error rate
+	errorRate := float64(0)
+	if total > 0 {
+		errorRate = float64(errors) / float64(total) * 100
+	}
+
+	// Get CPU usage estimate
+	cpuUsage := getCPUUsage()
+
 	return map[string]interface{}{
-		"server_type":        "chi-web",
-		"active_connections": atomic.LoadInt64(&m.activeConnections),
-		"total_requests":     atomic.LoadInt64(&m.totalRequests),
+		// Server info
+		"server_type": "chi-web",
+		"num_cpu":     runtime.NumCPU(),
+
+		// Request metrics
+		"active_connections": active,
+		"total_requests":     total,
 		"completed_requests": completed,
-		"error_count":        atomic.LoadInt64(&m.errorCount),
-		"uptime_seconds":     uptime,
-		"requests_per_sec":   float64(completed) / uptime,
-		"memory_alloc_mb":    memStats.Alloc / 1024 / 1024,
-		"memory_sys_mb":      memStats.Sys / 1024 / 1024,
-		"num_goroutines":     runtime.NumGoroutine(),
-		"num_gc":             memStats.NumGC,
+		"error_count":        errors,
+		"error_rate_percent": errorRate,
+
+		// Performance metrics
+		"uptime_seconds":    uptime,
+		"requests_per_sec":  rps,
+		"cpu_usage_percent": cpuUsage,
+
+		// Memory metrics (in MB for easier reading)
+		"memory_alloc_mb":     float64(memStats.Alloc) / 1024 / 1024,
+		"memory_sys_mb":       float64(memStats.Sys) / 1024 / 1024,
+		"memory_heap_mb":      float64(memStats.HeapAlloc) / 1024 / 1024,
+		"memory_stack_mb":     float64(memStats.StackInuse) / 1024 / 1024,
+		"memory_heap_objects": memStats.HeapObjects,
+
+		// GC metrics
+		"num_gc":            memStats.NumGC,
+		"gc_pause_total_ms": float64(memStats.PauseTotalNs) / 1e6,
+		"gc_pause_last_ms":  float64(memStats.PauseNs[(memStats.NumGC+255)%256]) / 1e6,
+
+		// Goroutine metrics
+		"num_goroutines": runtime.NumGoroutine(),
 	}
 }
 
@@ -170,7 +224,7 @@ func main() {
 		defer ticker.Stop()
 		for range ticker.C {
 			stats := metrics.GetStats()
-			log.Printf("[CHI-WEB] Active=%d, Total=%d, Completed=%d, RPS=%.2f, Mem=%dMB, Goroutines=%d",
+			log.Printf("[CHI-WEB] Active=%d, Total=%d, Completed=%d, RPS=%.2f, Mem=%.0fMB, Goroutines=%d",
 				stats["active_connections"],
 				stats["total_requests"],
 				stats["completed_requests"],

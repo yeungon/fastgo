@@ -260,8 +260,9 @@
             </div>
             <div class="metrics-grid">
                 <div class="metric-card">
-                    <div class="label">Errors</div>
-                    <div class="value worker" id="errors1">0</div>
+                    <div class="label">CPU</div>
+                    <div class="value worker" id="cpu1">0</div>
+                    <div class="unit">%</div>
                 </div>
                 <div class="metric-card">
                     <div class="label">Goroutines</div>
@@ -270,6 +271,26 @@
                 <div class="metric-card">
                     <div class="label">Total</div>
                     <div class="value worker" id="total1">0</div>
+                </div>
+                <div class="metric-card">
+                    <div class="label">Errors</div>
+                    <div class="value worker" id="errors1">0</div>
+                </div>
+            </div>
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="label">Heap</div>
+                    <div class="value worker" id="heap1">0</div>
+                    <div class="unit">MB</div>
+                </div>
+                <div class="metric-card">
+                    <div class="label">GC Runs</div>
+                    <div class="value worker" id="gc1">0</div>
+                </div>
+                <div class="metric-card">
+                    <div class="label">GC Pause</div>
+                    <div class="value worker" id="gcpause1">0</div>
+                    <div class="unit">ms</div>
                 </div>
                 <div class="metric-card">
                     <div class="label">Uptime</div>
@@ -312,8 +333,9 @@
             </div>
             <div class="metrics-grid">
                 <div class="metric-card">
-                    <div class="label">Errors</div>
-                    <div class="value chi" id="errors2">0</div>
+                    <div class="label">CPU</div>
+                    <div class="value chi" id="cpu2">0</div>
+                    <div class="unit">%</div>
                 </div>
                 <div class="metric-card">
                     <div class="label">Goroutines</div>
@@ -322,6 +344,26 @@
                 <div class="metric-card">
                     <div class="label">Total</div>
                     <div class="value chi" id="total2">0</div>
+                </div>
+                <div class="metric-card">
+                    <div class="label">Errors</div>
+                    <div class="value chi" id="errors2">0</div>
+                </div>
+            </div>
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="label">Heap</div>
+                    <div class="value chi" id="heap2">0</div>
+                    <div class="unit">MB</div>
+                </div>
+                <div class="metric-card">
+                    <div class="label">GC Runs</div>
+                    <div class="value chi" id="gc2">0</div>
+                </div>
+                <div class="metric-card">
+                    <div class="label">GC Pause</div>
+                    <div class="value chi" id="gcpause2">0</div>
+                    <div class="unit">ms</div>
                 </div>
                 <div class="metric-card">
                     <div class="label">Uptime</div>
@@ -359,6 +401,21 @@
             </h3>
             <div class="chart-wrapper">
                 <canvas id="goroutinesChart"></canvas>
+            </div>
+        </div>
+        <div class="chart-card">
+            <h3>🔥 CPU Usage <span class="server-badge worker">Worker</span><span class="server-badge chi">Chi</span>
+            </h3>
+            <div class="chart-wrapper">
+                <canvas id="cpuChart"></canvas>
+            </div>
+        </div>
+        <div class="chart-card">
+            <h3>🗑️ GC Pause Time <span class="server-badge worker">Worker</span><span
+                    class="server-badge chi">Chi</span>
+            </h3>
+            <div class="chart-wrapper">
+                <canvas id="gcChart"></canvas>
             </div>
         </div>
     </div>
@@ -444,6 +501,14 @@
             document.getElementById('goroutinesChart').getContext('2d'),
             'Worker Pool', 'Chi Web'
         );
+        const cpuChart = createComparisonChart(
+            document.getElementById('cpuChart').getContext('2d'),
+            'Worker Pool', 'Chi Web'
+        );
+        const gcChart = createComparisonChart(
+            document.getElementById('gcChart').getContext('2d'),
+            'Worker Pool', 'Chi Web'
+        );
 
         // Store latest values for each server
         let server1Data = {};
@@ -481,11 +546,17 @@
             document.getElementById('active' + suffix).textContent = data.active_connections || 0;
             document.getElementById('rps' + suffix).textContent = (data.requests_per_sec || 0).toFixed(2);
             document.getElementById('completed' + suffix).textContent = formatNumber(data.completed_requests || 0);
-            document.getElementById('memory' + suffix).textContent = data.memory_alloc_mb || 0;
+            document.getElementById('memory' + suffix).textContent = (data.memory_alloc_mb || 0).toFixed(1);
             document.getElementById('errors' + suffix).textContent = formatNumber(data.error_count || 0);
             document.getElementById('goroutines' + suffix).textContent = data.num_goroutines || 0;
             document.getElementById('total' + suffix).textContent = formatNumber(data.total_requests || 0);
             document.getElementById('uptime' + suffix).textContent = formatUptime(data.uptime_seconds || 0);
+
+            // New metrics
+            document.getElementById('cpu' + suffix).textContent = (data.cpu_usage_percent || 0).toFixed(1);
+            document.getElementById('heap' + suffix).textContent = (data.memory_heap_mb || 0).toFixed(1);
+            document.getElementById('gc' + suffix).textContent = data.num_gc || 0;
+            document.getElementById('gcpause' + suffix).textContent = (data.gc_pause_last_ms || 0).toFixed(2);
         }
 
         function setConnectionStatus(serverId, connected) {
@@ -516,6 +587,12 @@
             addComparisonData(goroutinesChart, timeLabel,
                 server1Data.num_goroutines || 0,
                 server2Data.num_goroutines || 0);
+            addComparisonData(cpuChart, timeLabel,
+                server1Data.cpu_usage_percent || 0,
+                server2Data.cpu_usage_percent || 0);
+            addComparisonData(gcChart, timeLabel,
+                server1Data.gc_pause_last_ms || 0,
+                server2Data.gc_pause_last_ms || 0);
         }
 
         // Connect to Worker Pool server (8080)

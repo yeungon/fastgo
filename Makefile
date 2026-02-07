@@ -1,12 +1,14 @@
-.PHONY: help build build-web build-all run run-both run-compare test clean docker docker-run benchmark install-deps setup-limits deploy update
+.PHONY: help build build-web build-fiber build-all run run-both run-all run-compare test clean docker docker-run benchmark install-deps setup-limits deploy update
 
 # Variables
 BINARY_NAME=server
 WEB_BINARY=web-server
+FIBER_BINARY=fiber-server
 CLIENT_BINARY=client
 DOCKER_IMAGE=highconcurrency-server
 PORT?=8080
 WEB_PORT?=8081
+FIBER_PORT?=8082
 WORKERS?=8
 
 # VPS Deployment Configuration (customize these)
@@ -35,8 +37,13 @@ build-web: ## Build the chi web server (net/http)
 	CGO_ENABLED=0 go build -ldflags="-w -s" -o $(WEB_BINARY) ./cmd/web/main.go
 	@echo "Build complete: $(WEB_BINARY)"
 
-build-all: build build-web ## Build both servers
-	@echo "Both servers built!"
+build-fiber: ## Build the Fiber server (fasthttp)
+	@echo "Building Fiber server..."
+	CGO_ENABLED=0 go build -ldflags="-w -s" -o $(FIBER_BINARY) ./cmd/fiber/main.go
+	@echo "Build complete: $(FIBER_BINARY)"
+
+build-all: build build-web build-fiber ## Build all three servers
+	@echo "All servers built!"
 
 build-client: ## Build the test client
 	@echo "Building client..."
@@ -49,7 +56,10 @@ run: build ## Build and run the worker pool server
 run-web: build-web ## Build and run the chi web server
 	PORT=$(WEB_PORT) ./$(WEB_BINARY)
 
-run-both: build-all ## Run both servers for comparison
+run-fiber: build-fiber ## Build and run the Fiber server
+	./$(FIBER_BINARY)
+
+run-both: build build-web ## Run Worker Pool + Chi servers for comparison
 	@echo "Starting Worker Pool server on port 8080..."
 	./$(BINARY_NAME) &
 	@sleep 1
@@ -64,12 +74,37 @@ run-both: build-all ## Run both servers for comparison
 	@echo "Press Ctrl+C to stop"
 	@wait
 
-run-compare: run-both ## Alias for run-both
+run-all: build-all ## Run all three servers for comparison
+	@echo "Starting Worker Pool server on port 8080..."
+	./$(BINARY_NAME) &
+	@sleep 1
+	@echo "Starting Chi Web server on port 8081..."
+	PORT=8081 ./$(WEB_BINARY) &
+	@sleep 1
+	@echo "Starting Fiber server on port 8082..."
+	./$(FIBER_BINARY) &
+	@echo ""
+	@echo "All three servers running!"
+	@echo "  Worker Pool: http://localhost:8080"
+	@echo "  Chi Web:     http://localhost:8081"
+	@echo "  Fiber:       http://localhost:8082"
+	@echo "  Compare (2): http://localhost:8080/compare"
+	@echo "  Compare (3): http://localhost:8080/compare3"
+	@echo ""
+	@echo "Press Ctrl+C to stop"
+	@wait
 
-stop-both: ## Stop both servers
+run-compare: run-both ## Alias for run-both (2-server comparison)
+
+run-compare3: run-all ## Alias for run-all (3-server comparison)
+
+stop-all: ## Stop all servers
 	@pkill -f "$(BINARY_NAME)" 2>/dev/null || true
 	@pkill -f "$(WEB_BINARY)" 2>/dev/null || true
-	@echo "Servers stopped"
+	@pkill -f "$(FIBER_BINARY)" 2>/dev/null || true
+	@echo "All servers stopped"
+
+stop-both: stop-all ## Alias for stop-all
 
 run-dev: ## Run with race detector for development
 	go run -race main.go
@@ -113,8 +148,10 @@ docker-compose-down: ## Stop docker-compose services
 clean: ## Clean build artifacts
 	rm -f $(BINARY_NAME)
 	rm -f $(WEB_BINARY)
+	rm -f $(FIBER_BINARY)
 	rm -f $(BINARY_NAME)-linux
 	rm -f $(WEB_BINARY)-linux
+	rm -f $(FIBER_BINARY)-linux
 	rm -f client/$(CLIENT_BINARY)
 	go clean
 

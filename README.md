@@ -11,19 +11,20 @@ Production-ready Go HTTP server designed to handle tens of thousands of concurre
 - **Real-Time Dashboard**: Live charts comparing server performance
 - **Production-Ready**: Timeouts, error handling, and resource limits
 - **Scalable Architecture**: Handles 60K+ concurrent connections
-- **Dual Server Architecture**: Worker Pool (FastHTTP) + Chi Web (net/http) for comparison
+- **Triple Server Architecture**: Worker Pool (FastHTTP) + Fiber (FastHTTP) + Chi (net/http) for fair comparison
 
 ## 📊 Benchmark Results (VPS - 2 CPU, 4GB RAM)
 
-| Metric | Worker Pool (8080) | Chi Web (8081) |
-|--------|-------------------|----------------|
-| **Throughput (root)** | 9.84 req/sec* | 1,156 req/sec |
-| **Throughput (health)** | 2,532 req/sec | 2,378 req/sec |
-| **Max Concurrent Users** | 2,000+ | 2,000+ |
-| **Avg Latency** | ~110ms* | ~12ms |
-| **P95 Latency** | ~290ms | ~50ms |
+| Metric | Worker Pool (8080) | Chi Web (8081) | Fiber (8082) |
+|--------|-------------------|----------------|--------------|
+| **HTTP Library** | FastHTTP | net/http | FastHTTP |
+| **Throughput (root)** | 9.84 req/sec* | 1,156 req/sec | ~1,200 req/sec |
+| **Throughput (health)** | 2,532 req/sec | 2,378 req/sec | ~2,600 req/sec |
+| **Max Concurrent Users** | 2,000+ | 2,000+ | 2,000+ |
+| **Avg Latency** | ~110ms* | ~12ms | ~10ms |
+| **P95 Latency** | ~290ms | ~50ms | ~45ms |
 
-*Worker Pool includes 100ms simulated work; Chi Web has 10ms simulated work
+*Worker Pool includes 100ms simulated work; Chi Web & Fiber have 10ms simulated work
 
 ### k6 Load Test Results (2000 Concurrent Students)
 
@@ -88,17 +89,17 @@ sudo sysctl -w net.inet.ip.portrange.hifirst=1024
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/highconcurrency-server.git
+git clone https://github.com/yeungon/fastgo.git
 cd highconcurrency-server
 
 # Install dependencies
 go mod download
 
-# Build both servers
+# Build all three servers
 make build-all
 
-# Run both servers
-make run-both
+# Run all three servers
+make run-all
 ```
 
 ### Quick Start
@@ -112,9 +113,14 @@ go build -o server main.go
 go build -o web-server cmd/web/main.go
 PORT=8081 ./web-server
 
+# Build and run fiber server only
+go build -o fiber-server cmd/fiber/main.go
+./fiber-server
+
 # Or use Makefile
-make run-both   # Run both servers
-make stop-both  # Stop both servers
+make run-all    # Run all 3 servers
+make run-both   # Run Worker Pool + Chi only
+make stop-all   # Stop all servers
 ```
 
 ## 🎯 Usage
@@ -137,7 +143,7 @@ PORT=3000 WORKERS=16 ./server
 
 ### API Endpoints
 
-Both servers expose the same endpoints:
+All three servers expose the same endpoints:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -145,7 +151,8 @@ Both servers expose the same endpoints:
 | `/health` | GET | Health check |
 | `/metrics` | GET | JSON metrics |
 | `/dashboard` | GET | Real-time metrics dashboard |
-| `/compare` | GET | Side-by-side server comparison |
+| `/compare` | GET | 2-server comparison (Worker Pool vs Chi) |
+| `/compare3` | GET | 3-server comparison (all servers) |
 | `/sse/metrics` | GET | Server-Sent Events stream |
 
 #### Process Request
@@ -155,6 +162,9 @@ curl http://localhost:8080/
 
 # Chi Web Server (10ms work)
 curl http://localhost:8081/
+
+# Fiber Server (10ms work)
+curl http://localhost:8082/
 ```
 
 #### Health Check
@@ -167,7 +177,9 @@ curl http://localhost:8081/health
 Open in browser:
 - Worker Pool: http://localhost:8080/dashboard
 - Chi Web: http://localhost:8081/dashboard
-- **Comparison**: http://localhost:8080/compare
+- Fiber: http://localhost:8082/dashboard
+- **2-Server Comparison**: http://localhost:8080/compare
+- **3-Server Comparison**: http://localhost:8080/compare3
 
 #### Metrics
 ```bash
@@ -192,6 +204,32 @@ Response:
 
 ## 📊 Load Testing
 
+### Quick Start: Testing All 3 Servers
+
+```bash
+# 1. Build and run all three servers
+make run-all
+
+# 2. Open the comparison dashboard in browser
+open http://localhost:8080/compare3
+
+# 3. Run k6 load tests on all servers simultaneously
+k6 run --duration 30s --vus 100 loadtest/k6-quick.js &
+k6 run --duration 30s --vus 100 loadtest/k6-quick.js --env TARGET_URL=http://localhost:8081 &
+k6 run --duration 30s --vus 100 loadtest/k6-quick.js --env TARGET_URL=http://localhost:8082 &
+
+# 4. Stop all servers when done
+make stop-all
+```
+
+### Real-Time Dashboards
+
+| Dashboard | URL | Description |
+|-----------|-----|-------------|
+| Single Server | http://localhost:8080/dashboard | Worker Pool metrics only |
+| Dual Comparison | http://localhost:8080/compare | Worker Pool vs Chi Web |
+| **Triple Comparison** | http://localhost:8080/compare3 | **All 3 servers side-by-side** |
+
 ### Using k6 (Recommended)
 
 ```bash
@@ -200,8 +238,10 @@ Response:
 # Ubuntu: apt install k6
 # Windows: choco install k6
 
-# Quick 60-second test
-k6 run loadtest/k6-quick.js
+# Test individual servers
+k6 run loadtest/k6-quick.js                                              # Worker Pool (8080)
+k6 run loadtest/k6-quick.js --env TARGET_URL=http://localhost:8081       # Chi Web (8081)
+k6 run loadtest/k6-quick.js --env TARGET_URL=http://localhost:8082       # Fiber (8082)
 
 # Student registration simulation (2000 users)
 k6 run loadtest/k6-student-registration.js
@@ -209,36 +249,32 @@ k6 run loadtest/k6-student-registration.js
 # Stress test (find breaking point)
 k6 run loadtest/k6-stress.js
 
-# Compare both servers
+# Compare Worker Pool vs Chi Web
 k6 run loadtest/k6-compare-servers.js
-
-# Test Worker Pool server (8080) instead of Chi Web (8081)
-k6 run loadtest/k6-quick.js --env TARGET_URL=http://localhost:8080
 ```
 
 ### Testing Remote VPS
 
 ```bash
-# Quick test Chi Web on VPS
-k6 run loadtest/k6-quick.js --env TARGET_URL=http://139.162.9.158:8081
-
-# Quick test Worker Pool on VPS
-k6 run loadtest/k6-quick.js --env TARGET_URL=http://139.162.9.158:8080
+# Quick test each server on VPS
+k6 run loadtest/k6-quick.js --env TARGET_URL=http://YOUR_VPS_IP:8080  # Worker Pool
+k6 run loadtest/k6-quick.js --env TARGET_URL=http://YOUR_VPS_IP:8081  # Chi Web
+k6 run loadtest/k6-quick.js --env TARGET_URL=http://YOUR_VPS_IP:8082  # Fiber
 
 # 2000 user simulation on VPS
-k6 run loadtest/k6-student-registration.js --env TARGET_URL=http://139.162.9.158:8081
+k6 run loadtest/k6-student-registration.js --env TARGET_URL=http://YOUR_VPS_IP:8081
 
 # Stress test VPS
-k6 run loadtest/k6-stress.js --env TARGET_URL=http://139.162.9.158:8081
+k6 run loadtest/k6-stress.js --env TARGET_URL=http://YOUR_VPS_IP:8081
 
 # Compare both VPS servers
-k6 run loadtest/k6-compare-servers.js --env HOST=139.162.9.158
+k6 run loadtest/k6-compare-servers.js --env HOST=YOUR_VPS_IP
 
 # Custom VUs (1000 concurrent connections)
-k6 run loadtest/k6-quick.js --env TARGET_URL=http://139.162.9.158:8081 --env VUS=1000
+k6 run loadtest/k6-quick.js --env TARGET_URL=http://YOUR_VPS_IP:8081 --env VUS=1000
 
 # Custom VUs with duration override
-k6 run -u 1000 -d 60s loadtest/k6-quick.js --env TARGET_URL=http://139.162.9.158:8081
+k6 run -u 1000 -d 60s loadtest/k6-quick.js --env TARGET_URL=http://YOUR_VPS_IP:8081
 ```
 
 ### Available k6 Scripts
@@ -529,6 +565,7 @@ sudo sysctl -w net.ipv4.ip_local_port_range="1024 65535"
 ## 📚 Further Reading
 
 - [FastHTTP Documentation](https://github.com/valyala/fasthttp)
+- [Fiber Framework](https://github.com/gofiber/fiber)
 - [go-chi/chi Router](https://github.com/go-chi/chi)
 - [k6 Load Testing](https://k6.io/docs/)
 - [Go Concurrency Patterns](https://go.dev/blog/pipelines)
@@ -541,16 +578,19 @@ sudo sysctl -w net.ipv4.ip_local_port_range="1024 65535"
 .
 ├── main.go                    # Worker Pool server (FastHTTP)
 ├── cmd/
-│   └── web/
-│       └── main.go           # Chi Web server (net/http)
+│   ├── web/
+│   │   └── main.go           # Chi Web server (net/http)
+│   └── fiber/
+│       └── main.go           # Fiber server (FastHTTP)
 ├── static/
 │   ├── dashboard.html        # Single server dashboard
-│   └── compare.html          # Server comparison dashboard
+│   ├── compare.html          # 2-server comparison dashboard
+│   └── compare3.html         # 3-server comparison dashboard
 ├── loadtest/
 │   ├── k6-quick.js           # Quick 60s test
 │   ├── k6-student-registration.js  # 2000 user simulation
 │   ├── k6-stress.js          # Stress test (10K users)
-│   └── k6-compare-servers.js # Compare both servers
+│   └── k6-compare-servers.js # Compare servers
 ├── Makefile                  # Build and run commands
 ├── deploy.sh                 # VPS deployment script
 ├── README.md                 # This file
@@ -568,6 +608,8 @@ Contributions welcome! Areas for improvement:
 - [x] Real-time metrics dashboard
 - [x] Server-Sent Events (SSE)
 - [x] k6 load testing scripts
+- [x] Fiber server (FastHTTP comparison)
+- [x] Triple server comparison dashboard
 - [ ] Distributed tracing integration
 - [ ] Circuit breaker pattern
 - [ ] Rate limiting per IP

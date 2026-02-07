@@ -112,25 +112,76 @@ func (m *Metrics) IncrementErrors() {
 	atomic.AddInt64(&m.errorCount, 1)
 }
 
+// getCPUUsage calculates approximate CPU usage based on goroutines and work
+func getCPUUsage() float64 {
+	numCPU := runtime.NumCPU()
+	numGoroutines := runtime.NumGoroutine()
+
+	// Approximate CPU usage based on goroutines vs available CPUs
+	usage := float64(numGoroutines) / float64(numCPU*10) * 100
+	if usage > 100 {
+		usage = 100
+	}
+	return usage
+}
+
 // GetStats returns current metrics snapshot
 func (m *Metrics) GetStats() map[string]interface{} {
 	uptime := time.Since(m.startTime).Seconds()
 	completed := atomic.LoadInt64(&m.completedRequests)
+	active := atomic.LoadInt64(&m.activeConnections)
+	total := atomic.LoadInt64(&m.totalRequests)
+	errors := atomic.LoadInt64(&m.errorCount)
 
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
 
+	// Calculate requests per second
+	rps := float64(0)
+	if uptime > 0 {
+		rps = float64(completed) / uptime
+	}
+
+	// Calculate error rate
+	errorRate := float64(0)
+	if total > 0 {
+		errorRate = float64(errors) / float64(total) * 100
+	}
+
+	// Get CPU usage estimate
+	cpuUsage := getCPUUsage()
+
 	return map[string]interface{}{
-		"active_connections": atomic.LoadInt64(&m.activeConnections),
-		"total_requests":     atomic.LoadInt64(&m.totalRequests),
+		// Server info
+		"server_type": "worker-pool",
+		"num_cpu":     runtime.NumCPU(),
+
+		// Request metrics
+		"active_connections": active,
+		"total_requests":     total,
 		"completed_requests": completed,
-		"error_count":        atomic.LoadInt64(&m.errorCount),
-		"uptime_seconds":     uptime,
-		"requests_per_sec":   float64(completed) / uptime,
-		"memory_alloc_mb":    memStats.Alloc / 1024 / 1024,
-		"memory_sys_mb":      memStats.Sys / 1024 / 1024,
-		"num_goroutines":     runtime.NumGoroutine(),
-		"num_gc":             memStats.NumGC,
+		"error_count":        errors,
+		"error_rate_percent": errorRate,
+
+		// Performance metrics
+		"uptime_seconds":    uptime,
+		"requests_per_sec":  rps,
+		"cpu_usage_percent": cpuUsage,
+
+		// Memory metrics (in MB)
+		"memory_alloc_mb":     float64(memStats.Alloc) / 1024 / 1024,
+		"memory_sys_mb":       float64(memStats.Sys) / 1024 / 1024,
+		"memory_heap_mb":      float64(memStats.HeapAlloc) / 1024 / 1024,
+		"memory_stack_mb":     float64(memStats.StackInuse) / 1024 / 1024,
+		"memory_heap_objects": memStats.HeapObjects,
+
+		// GC metrics
+		"num_gc":            memStats.NumGC,
+		"gc_pause_total_ms": float64(memStats.PauseTotalNs) / 1e6,
+		"gc_pause_last_ms":  float64(memStats.PauseNs[(memStats.NumGC+255)%256]) / 1e6,
+
+		// Goroutine metrics
+		"num_goroutines": runtime.NumGoroutine(),
 	}
 }
 
@@ -325,6 +376,17 @@ func (s *Server) handleCompare(ctx *fasthttp.RequestCtx) {
 	ctx.Write(content)
 }
 
+// handleCompare3 serves the triple comparison dashboard (Worker Pool vs Chi vs Fiber)
+func (s *Server) handleCompare3(ctx *fasthttp.RequestCtx) {
+	content, err := staticFiles.ReadFile("static/compare3.html")
+	if err != nil {
+		ctx.Error("Compare3 dashboard not found", fasthttp.StatusNotFound)
+		return
+	}
+	ctx.Response.Header.Set("Content-Type", "text/html; charset=utf-8")
+	ctx.Write(content)
+}
+
 // handleSSEMetrics streams metrics via Server-Sent Events
 func (s *Server) handleSSEMetrics(ctx *fasthttp.RequestCtx) {
 	ctx.Response.Header.Set("Content-Type", "text/event-stream")
@@ -368,6 +430,8 @@ func (s *Server) router(ctx *fasthttp.RequestCtx) {
 		s.handleDashboard(ctx)
 	case "/compare":
 		s.handleCompare(ctx)
+	case "/compare3":
+		s.handleCompare3(ctx)
 	case "/sse/metrics":
 		s.handleSSEMetrics(ctx)
 	case "/metrics":
@@ -443,7 +507,7 @@ func (s *Server) logMetrics(ctx context.Context) {
 			return
 		case <-ticker.C:
 			stats := s.metrics.GetStats()
-			log.Printf("METRICS: Active=%d, Total=%d, Completed=%d, RPS=%.2f, Mem=%dMB, Goroutines=%d",
+			log.Printf("METRICS: Active=%d, Total=%d, Completed=%d, RPS=%.2f, Mem=%.0fMB, Goroutines=%d",
 				stats["active_connections"],
 				stats["total_requests"],
 				stats["completed_requests"],
