@@ -7,9 +7,34 @@ Production-ready Go HTTP server designed to handle tens of thousands of concurre
 - **FastHTTP Integration**: 35% less memory usage compared to standard `net/http`
 - **Worker Pool Pattern**: Efficient CPU utilization with configurable worker count
 - **Graceful Shutdown**: Proper cleanup and connection draining
-- **Metrics & Monitoring**: Real-time performance statistics
+- **Metrics & Monitoring**: Real-time performance statistics with SSE streaming
+- **Real-Time Dashboard**: Live charts comparing server performance
 - **Production-Ready**: Timeouts, error handling, and resource limits
 - **Scalable Architecture**: Handles 60K+ concurrent connections
+- **Dual Server Architecture**: Worker Pool (FastHTTP) + Chi Web (net/http) for comparison
+
+## 📊 Benchmark Results (VPS - 2 CPU, 4GB RAM)
+
+| Metric | Worker Pool (8080) | Chi Web (8081) |
+|--------|-------------------|----------------|
+| **Throughput (root)** | 9.84 req/sec* | 1,156 req/sec |
+| **Throughput (health)** | 2,532 req/sec | 2,378 req/sec |
+| **Max Concurrent Users** | 2,000+ | 2,000+ |
+| **Avg Latency** | ~110ms* | ~12ms |
+| **P95 Latency** | ~290ms | ~50ms |
+
+*Worker Pool includes 100ms simulated work; Chi Web has 10ms simulated work
+
+### k6 Load Test Results (2000 Concurrent Students)
+
+```
+✓ Total Requests:     217,880
+✓ Throughput:         885 req/sec
+✓ Avg Latency:        116.82ms
+✓ P95 Latency:        290.69ms
+✓ Success Rate:       100% (GET) / 0% (POST - no handler)
+✓ Max VUs:            2,000
+```
 
 ## 📋 System Requirements & Limits
 
@@ -62,21 +87,34 @@ sudo sysctl -w net.inet.ip.portrange.hifirst=1024
 ## 🔧 Installation
 
 ```bash
-# Clone or create project
-mkdir highconcurrency-server
+# Clone repository
+git clone https://github.com/yourusername/highconcurrency-server.git
 cd highconcurrency-server
 
-# Initialize Go module
-go mod init highconcurrency-server
-
 # Install dependencies
-go get github.com/valyala/fasthttp
+go mod download
 
-# Build
+# Build both servers
+make build-all
+
+# Run both servers
+make run-both
+```
+
+### Quick Start
+
+```bash
+# Build and run worker pool server only
 go build -o server main.go
-
-# Run
 ./server
+
+# Build and run chi web server only
+go build -o web-server cmd/web/main.go
+PORT=8081 ./web-server
+
+# Or use Makefile
+make run-both   # Run both servers
+make stop-both  # Stop both servers
 ```
 
 ## 🎯 Usage
@@ -99,18 +137,37 @@ PORT=3000 WORKERS=16 ./server
 
 ### API Endpoints
 
+Both servers expose the same endpoints:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Main endpoint (with simulated work) |
+| `/health` | GET | Health check |
+| `/metrics` | GET | JSON metrics |
+| `/dashboard` | GET | Real-time metrics dashboard |
+| `/compare` | GET | Side-by-side server comparison |
+| `/sse/metrics` | GET | Server-Sent Events stream |
+
 #### Process Request
 ```bash
-curl -X POST http://localhost:8080/ \
-  -H "Content-Type: application/json" \
-  -H "X-Request-ID: test-123" \
-  -d '{"data": "your payload"}'
+# Worker Pool Server (100ms work)
+curl http://localhost:8080/
+
+# Chi Web Server (10ms work)
+curl http://localhost:8081/
 ```
 
 #### Health Check
 ```bash
 curl http://localhost:8080/health
+curl http://localhost:8081/health
 ```
+
+#### Real-Time Dashboard
+Open in browser:
+- Worker Pool: http://localhost:8080/dashboard
+- Chi Web: http://localhost:8081/dashboard
+- **Comparison**: http://localhost:8080/compare
 
 #### Metrics
 ```bash
@@ -135,15 +192,63 @@ Response:
 
 ## 📊 Load Testing
 
-### Using Apache Bench
+### Using k6 (Recommended)
 
 ```bash
-# Test with 10K requests, 1K concurrent
-ab -n 10000 -c 1000 http://localhost:8080/
+# Install k6
+# macOS: brew install k6
+# Ubuntu: apt install k6
+# Windows: choco install k6
 
-# With keep-alive disabled
-ab -n 10000 -c 1000 -k http://localhost:8080/
+# Quick 60-second test
+k6 run loadtest/k6-quick.js
+
+# Student registration simulation (2000 users)
+k6 run loadtest/k6-student-registration.js
+
+# Stress test (find breaking point)
+k6 run loadtest/k6-stress.js
+
+# Compare both servers
+k6 run loadtest/k6-compare-servers.js
+
+# Test Worker Pool server (8080) instead of Chi Web (8081)
+k6 run loadtest/k6-quick.js --env TARGET_URL=http://localhost:8080
 ```
+
+### Testing Remote VPS
+
+```bash
+# Quick test Chi Web on VPS
+k6 run loadtest/k6-quick.js --env TARGET_URL=http://139.162.9.158:8081
+
+# Quick test Worker Pool on VPS
+k6 run loadtest/k6-quick.js --env TARGET_URL=http://139.162.9.158:8080
+
+# 2000 user simulation on VPS
+k6 run loadtest/k6-student-registration.js --env TARGET_URL=http://139.162.9.158:8081
+
+# Stress test VPS
+k6 run loadtest/k6-stress.js --env TARGET_URL=http://139.162.9.158:8081
+
+# Compare both VPS servers
+k6 run loadtest/k6-compare-servers.js --env HOST=139.162.9.158
+
+# Custom VUs (1000 concurrent connections)
+k6 run loadtest/k6-quick.js --env TARGET_URL=http://139.162.9.158:8081 --env VUS=1000
+
+# Custom VUs with duration override
+k6 run -u 1000 -d 60s loadtest/k6-quick.js --env TARGET_URL=http://139.162.9.158:8081
+```
+
+### Available k6 Scripts
+
+| Script | Description | Max VUs | Duration |
+|--------|-------------|---------|----------|
+| `k6-quick.js` | Quick development test | 200 | 60s |
+| `k6-student-registration.js` | Realistic user flow | 2,000 | 5min |
+| `k6-stress.js` | Find breaking point | 10,000 | 12min |
+| `k6-compare-servers.js` | Compare both servers | 1,000 | 3min |
 
 ### Using wrk
 
@@ -155,8 +260,21 @@ ab -n 10000 -c 1000 -k http://localhost:8080/
 # Test for 30 seconds with 1000 connections, 8 threads
 wrk -t8 -c1000 -d30s http://localhost:8080/
 
-# With custom script
-wrk -t8 -c1000 -d30s -s post.lua http://localhost:8080/
+# Test Chi Web server
+wrk -t8 -c1000 -d30s http://localhost:8081/
+
+# Quick health check benchmark
+wrk -t4 -c100 -d10s http://localhost:8080/health
+```
+
+### Using Apache Bench
+
+```bash
+# Test with 10K requests, 1K concurrent
+ab -n 10000 -c 1000 http://localhost:8080/
+
+# With keep-alive
+ab -n 10000 -c 1000 -k http://localhost:8080/
 ```
 
 ### Using Go Client (from article)
@@ -274,6 +392,36 @@ func main() {
 
 ## 📈 Performance Benchmarks
 
+### Small VPS (2 CPU, 4GB RAM) - Linode
+
+**Worker Pool Server (8080)** - 100ms simulated work
+```
+wrk -t4 -c100 -d30s http://139.162.9.158:8080/
+  Requests/sec:     9.84
+  Avg Latency:      ~100ms (mostly simulated work)
+  Transfer/sec:     1.43KB
+```
+
+**Chi Web Server (8081)** - 10ms simulated work
+```
+wrk -t4 -c100 -d30s http://139.162.9.158:8081/
+  Requests/sec:     1,156.87
+  Avg Latency:      12.34ms
+  Transfer/sec:     191.57KB
+```
+
+**k6 Student Registration Test** - 2000 concurrent users
+```
+k6 run loadtest/k6-student-registration.js --env TARGET_URL=http://139.162.9.158:8081
+
+  Total Requests:   217,880
+  Throughput:       885 req/sec
+  Avg Latency:      116.82ms
+  P95 Latency:      290.69ms
+  Success Rate:     100% (GET requests)
+  Max VUs:          2,000
+```
+
 ### Raspberry Pi 4B (4GB RAM)
 - **60,000 concurrent connections**: ~800 MB RAM
 - **Worker count**: 4 (matching CPU cores)
@@ -381,9 +529,34 @@ sudo sysctl -w net.ipv4.ip_local_port_range="1024 65535"
 ## 📚 Further Reading
 
 - [FastHTTP Documentation](https://github.com/valyala/fasthttp)
+- [go-chi/chi Router](https://github.com/go-chi/chi)
+- [k6 Load Testing](https://k6.io/docs/)
 - [Go Concurrency Patterns](https://go.dev/blog/pipelines)
 - [Effective Go](https://go.dev/doc/effective_go)
 - [Linux Performance Tuning](https://www.kernel.org/doc/Documentation/networking/ip-sysctl.txt)
+
+## 📁 Project Structure
+
+```
+.
+├── main.go                    # Worker Pool server (FastHTTP)
+├── cmd/
+│   └── web/
+│       └── main.go           # Chi Web server (net/http)
+├── static/
+│   ├── dashboard.html        # Single server dashboard
+│   └── compare.html          # Server comparison dashboard
+├── loadtest/
+│   ├── k6-quick.js           # Quick 60s test
+│   ├── k6-student-registration.js  # 2000 user simulation
+│   ├── k6-stress.js          # Stress test (10K users)
+│   └── k6-compare-servers.js # Compare both servers
+├── Makefile                  # Build and run commands
+├── deploy.sh                 # VPS deployment script
+├── README.md                 # This file
+├── VPS_DEPLOYMENT.md         # Detailed deployment guide
+└── DEPLOYMENT_CHEATSHEET.md  # Quick deployment reference
+```
 
 ## 📝 License
 
@@ -392,6 +565,9 @@ MIT License - feel free to use in production!
 ## 🤝 Contributing
 
 Contributions welcome! Areas for improvement:
+- [x] Real-time metrics dashboard
+- [x] Server-Sent Events (SSE)
+- [x] k6 load testing scripts
 - [ ] Distributed tracing integration
 - [ ] Circuit breaker pattern
 - [ ] Rate limiting per IP
